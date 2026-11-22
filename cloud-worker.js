@@ -144,10 +144,10 @@ function extractValidStoryboard(rawText) {
   for (const jsonStr of candidates.reverse()) {
     try {
       const obj = JSON.parse(jsonStr);
-      const rawScenes = Array.isArray(obj.scenes) ? obj.scenes : [];
-      if (rawScenes.length >= 4) {
+      const rawScenes = Array.isArray(obj.scenes) ? obj.scenes : (Array.isArray(obj) ? obj : []);
+      if (rawScenes.length >= 1) {
         const scenes = rawScenes.slice(0, 7).map((sc, idx) => ({
-          narrationAr: String(sc.narrationAr || sc.text || '').trim() || 'حقيقة تقنية مذهلة تغير قواعد اللعبة!',
+          narrationAr: String(sc.narrationAr || sc.text || sc.narration || '').trim() || 'حقيقة تقنية مذهلة تغير قواعد اللعبة!',
           topBanner: String(sc.topBanner || 'حقيقة تقنية!').trim().slice(0, 26),
           diagramType: types.includes(sc.diagramType) ? sc.diagramType : types[idx % types.length],
           callout1: String(sc.callout1 || 'النواة الرئيسية').slice(0, 20),
@@ -172,10 +172,12 @@ function extractValidStoryboard(rawText) {
 
 async function generateStoryboard(isAi) {
   const providers = [
-    ...GROQ_KEYS.map((key) => ({ type: 'groq', key })),
-    ...GEMINI_KEYS.map((key) => ({ type: 'gemini', key }))
+    ...GEMINI_KEYS.map((key) => ({ type: 'gemini', key })),
+    ...GROQ_KEYS.map((key) => ({ type: 'groq', key }))
   ];
-  if (providers.length === 0) throw new Error('لا توجد مفاتيح GROQ_API_KEYS أو GEMINI_API_KEYS');
+  if (providers.length === 0) {
+    throw new Error('لا توجد مفاتيح GEMINI_API_KEYS أو GROQ_API_KEYS في بيئة التشغيل');
+  }
 
   const focus = isAi
     ? 'how a fascinating Artificial Intelligence breakthrough, photonic chip, or autonomous swarm works inside (Wonder Dose style)'
@@ -203,10 +205,36 @@ Return ONLY raw JSON:
   ]
 }`;
 
+  let lastError = 'استجابة غير صالحة من الموديل';
+
   for (let i = 0; i < providers.length; i++) {
     const p = providers[(llmIdx + i) % providers.length];
     try {
-      if (p.type === 'groq') {
+      if (p.type === 'gemini') {
+        for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(p.key)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: { responseMimeType: 'application/json', temperature: 0.85 }
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            const parsed = extractValidStoryboard(raw);
+            if (parsed) {
+              llmIdx = (llmIdx + i + 1) % providers.length;
+              return parsed;
+            }
+            lastError = `Gemini (${model}) أرجع نصاً غير قابل للتحليل: ${raw.slice(0, 120)}`;
+          } else {
+            const errTxt = await res.text();
+            lastError = `Gemini (${model}) HTTP ${res.status}: ${errTxt.slice(0, 180)}`;
+          }
+        }
+      } else {
         for (const model of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
           const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -223,34 +251,25 @@ Return ONLY raw JSON:
           });
           if (res.ok) {
             const data = await res.json();
-            const parsed = extractValidStoryboard(data.choices?.[0]?.message?.content || '');
+            const raw = data.choices?.[0]?.message?.content || '';
+            const parsed = extractValidStoryboard(raw);
             if (parsed) {
               llmIdx = (llmIdx + i + 1) % providers.length;
               return parsed;
             }
-          }
-        }
-      } else {
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': p.key },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json', temperature: 0.85 }
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const parsed = extractValidStoryboard(data.candidates?.[0]?.content?.parts?.[0]?.text || '');
-          if (parsed) {
-            llmIdx = (llmIdx + i + 1) % providers.length;
-            return parsed;
+            lastError = `Groq (${model}) أرجع نصاً غير قابل للتحليل: ${raw.slice(0, 120)}`;
+          } else {
+            const errTxt = await res.text();
+            lastError = `Groq (${model}) HTTP ${res.status}: ${errTxt.slice(0, 180)}`;
           }
         }
       }
-    } catch (_) {}
+    } catch (err) {
+      lastError = `${p.type} Exception: ${err.message}`;
+    }
   }
-  throw new Error('فشل توليد السيناريو');
+
+  throw new Error(`فشل توليد السيناريو -> ${lastError}`);
 }
 
 // توليد الصوت: ElevenLabs أولاً ثم تحويل تلقائي إلى Edge Neural Arabic المجاني المفتوح بلا حدود
@@ -589,6 +608,7 @@ async function produceAndPublishOne(index) {
 async function main() {
   await fsp.mkdir(WORK_DIR, { recursive: true });
   console.log(`🚀 بدء إنتاج دفعة (${BATCH_COUNT} فيديو) وإرسالها إلى ${TARGET_PLATFORM_URL}`);
+  console.log(`🔑 المفاتيح المقروءة -> Gemini: ${GEMINI_KEYS.length} | Groq: ${GROQ_KEYS.length}`);
   for (let i = 0; i < BATCH_COUNT; i++) {
     try {
       await produceAndPublishOne(i);
