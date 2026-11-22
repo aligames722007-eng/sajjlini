@@ -6,8 +6,8 @@ const { Resvg } = require('@resvg/resvg-js');
 
 const TARGET_PLATFORM_URL = (process.env.TARGET_PLATFORM_URL || 'http://127.0.0.1:5050').trim().replace(/\/$/, '');
 const TARGET_ADMIN_PASSWORD = (process.env.TARGET_ADMIN_PASSWORD || 'uni2026admin').trim();
-const GROQ_KEYS = (process.env.GROQ_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
-const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
+const GROQ_KEYS = (process.env.GROQ_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
+const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
 const ELEVEN_HUB_URL = (process.env.ELEVENLABS_HUB_URL || '').trim().replace(/\/$/, '');
 const ELEVEN_KEYS = (process.env.ELEVENLABS_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
 const VOICE_ID = (process.env.ELEVENLABS_VOICE_ID || 'onwK4e9ZLuTAKqWW03F9').trim();
