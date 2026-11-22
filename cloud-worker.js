@@ -17,6 +17,7 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 
 let llmIdx = 0;
 let elevenIdx = 0;
+let cachedModels = null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -171,6 +172,25 @@ function extractValidStoryboard(rawText) {
   return null;
 }
 
+async function resolveGeminiModels(key) {
+  if (cachedModels && cachedModels.length > 0) return cachedModels;
+  const defaults = ['gemini-3.0-flash', 'gemini-flash-latest'];
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const found = (data.models || [])
+        .filter((m) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+        .map((m) => String(m.name || '').replace(/^models\//, ''))
+        .filter((name) => name.includes('flash') && !name.includes('image') && !name.includes('audio'));
+      const merged = [...new Set([...defaults, ...found.reverse()])];
+      cachedModels = merged;
+      return merged;
+    }
+  } catch (_) {}
+  return defaults;
+}
+
 async function generateStoryboard(isAi) {
   if (GEMINI_KEYS.length === 0) {
     throw new Error('لا يوجد مفتاح GEMINI_API_KEYS في بيئة التشغيل');
@@ -206,7 +226,9 @@ Return ONLY raw JSON:
 
   for (let i = 0; i < GEMINI_KEYS.length; i++) {
     const key = GEMINI_KEYS[(llmIdx + i) % GEMINI_KEYS.length];
-    for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+    const models = await resolveGeminiModels(key);
+
+    for (const model of models) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
@@ -229,13 +251,14 @@ Return ONLY raw JSON:
             const parsed = extractValidStoryboard(raw);
             if (parsed) {
               llmIdx = (llmIdx + i + 1) % GEMINI_KEYS.length;
+              cachedModels = [model, ...models.filter((m) => m !== model)];
               return parsed;
             }
             errors.push(`${model} نص غير صالح: ${raw.slice(0, 120)}`);
             break;
           } else {
             const errTxt = await res.text();
-            errors.push(`${model} HTTP ${res.status}: ${errTxt.slice(0, 200)}`);
+            errors.push(`${model} HTTP ${res.status}: ${errTxt.slice(0, 180)}`);
             break;
           }
         } catch (err) {
@@ -246,10 +269,9 @@ Return ONLY raw JSON:
     }
   }
 
-  throw new Error(`فشل توليد السيناريو من Gemini -> ${errors.join(' | ')}`);
+  throw new Error(`فشل توليد السيناريو من Gemini -> ${errors.slice(0, 3).join(' | ')}`);
 }
 
-// توليد الصوت: ElevenLabs أولاً ثم تحويل تلقائي إلى Edge Neural Arabic المجاني المفتوح بلا حدود
 async function generateSceneAudio(arabicText, outAudioPath) {
   if (ELEVEN_HUB_URL) {
     try {
@@ -288,7 +310,6 @@ async function generateSceneAudio(arabicText, outAudioPath) {
     } catch (_) {}
   }
 
-  // بديل مجاني غير محدود بصوت عربي حيوي (Microsoft Neural TTS)
   try {
     await runCmd('edge-tts', [
       '--voice', 'ar-EG-ShakirNeural',
