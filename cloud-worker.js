@@ -6,8 +6,7 @@ const { Resvg } = require('@resvg/resvg-js');
 
 const TARGET_PLATFORM_URL = (process.env.TARGET_PLATFORM_URL || 'http://127.0.0.1:5050').trim().replace(/\/$/, '');
 const TARGET_ADMIN_PASSWORD = (process.env.TARGET_ADMIN_PASSWORD || 'uni2026admin').trim();
-const GROQ_KEYS = (process.env.GROQ_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
-const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || '').split(',').map(s => s.trim()).filter(Boolean);
+const GEMINI_KEYS = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '').split(',').map((s) => s.trim()).filter(Boolean);
 const ELEVEN_HUB_URL = (process.env.ELEVENLABS_HUB_URL || '').trim().replace(/\/$/, '');
 const ELEVEN_KEYS = (process.env.ELEVENLABS_KEYS || '').split(',').map((k) => k.trim()).filter(Boolean);
 const VOICE_ID = (process.env.ELEVENLABS_VOICE_ID || 'onwK4e9ZLuTAKqWW03F9').trim();
@@ -18,6 +17,8 @@ const ASSETS_DIR = path.join(__dirname, 'assets');
 
 let llmIdx = 0;
 let elevenIdx = 0;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function fixRtlText(str) {
   const clean = String(str || '').trim();
@@ -171,12 +172,8 @@ function extractValidStoryboard(rawText) {
 }
 
 async function generateStoryboard(isAi) {
-  const providers = [
-    ...GEMINI_KEYS.map((key) => ({ type: 'gemini', key })),
-    ...GROQ_KEYS.map((key) => ({ type: 'groq', key }))
-  ];
-  if (providers.length === 0) {
-    throw new Error('لا توجد مفاتيح GEMINI_API_KEYS أو GROQ_API_KEYS في بيئة التشغيل');
+  if (GEMINI_KEYS.length === 0) {
+    throw new Error('لا يوجد مفتاح GEMINI_API_KEYS في بيئة التشغيل');
   }
 
   const focus = isAi
@@ -205,14 +202,14 @@ Return ONLY raw JSON:
   ]
 }`;
 
-  let lastError = 'استجابة غير صالحة من الموديل';
+  const errors = [];
 
-  for (let i = 0; i < providers.length; i++) {
-    const p = providers[(llmIdx + i) % providers.length];
-    try {
-      if (p.type === 'gemini') {
-        for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
-          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(p.key)}`, {
+  for (let i = 0; i < GEMINI_KEYS.length; i++) {
+    const key = GEMINI_KEYS[(llmIdx + i) % GEMINI_KEYS.length];
+    for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -220,56 +217,36 @@ Return ONLY raw JSON:
               generationConfig: { responseMimeType: 'application/json', temperature: 0.85 }
             })
           });
+
+          if (res.status === 429 && attempt === 0) {
+            await sleep(12000);
+            continue;
+          }
+
           if (res.ok) {
             const data = await res.json();
             const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             const parsed = extractValidStoryboard(raw);
             if (parsed) {
-              llmIdx = (llmIdx + i + 1) % providers.length;
+              llmIdx = (llmIdx + i + 1) % GEMINI_KEYS.length;
               return parsed;
             }
-            lastError = `Gemini (${model}) أرجع نصاً غير قابل للتحليل: ${raw.slice(0, 120)}`;
+            errors.push(`${model} نص غير صالح: ${raw.slice(0, 120)}`);
+            break;
           } else {
             const errTxt = await res.text();
-            lastError = `Gemini (${model}) HTTP ${res.status}: ${errTxt.slice(0, 180)}`;
+            errors.push(`${model} HTTP ${res.status}: ${errTxt.slice(0, 200)}`);
+            break;
           }
-        }
-      } else {
-        for (const model of ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']) {
-          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${p.key}` },
-            body: JSON.stringify({
-              model,
-              temperature: 0.85,
-              response_format: { type: 'json_object' },
-              messages: [
-                { role: 'system', content: 'Return ONLY valid JSON.' },
-                { role: 'user', content: prompt }
-              ]
-            })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            const raw = data.choices?.[0]?.message?.content || '';
-            const parsed = extractValidStoryboard(raw);
-            if (parsed) {
-              llmIdx = (llmIdx + i + 1) % providers.length;
-              return parsed;
-            }
-            lastError = `Groq (${model}) أرجع نصاً غير قابل للتحليل: ${raw.slice(0, 120)}`;
-          } else {
-            const errTxt = await res.text();
-            lastError = `Groq (${model}) HTTP ${res.status}: ${errTxt.slice(0, 180)}`;
-          }
+        } catch (err) {
+          errors.push(`${model} Exception: ${err.message}`);
+          break;
         }
       }
-    } catch (err) {
-      lastError = `${p.type} Exception: ${err.message}`;
     }
   }
 
-  throw new Error(`فشل توليد السيناريو -> ${lastError}`);
+  throw new Error(`فشل توليد السيناريو من Gemini -> ${errors.join(' | ')}`);
 }
 
 // توليد الصوت: ElevenLabs أولاً ثم تحويل تلقائي إلى Edge Neural Arabic المجاني المفتوح بلا حدود
@@ -460,7 +437,6 @@ function buildRichDiagramSvgs(sc, sceneIdx, totalScenes, topicTag) {
   return { baseSvg, animSvg };
 }
 
-// توليد ملف ترجمة ASS متزامن مع تلوين الكلمة المنطوقة بالذهبي بدون أي مربع (سريع جداً في FFmpeg)
 function formatAssTime(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
@@ -572,7 +548,6 @@ async function produceAndPublishOne(index) {
     const story = await generateStoryboard(index % 2 === 1);
     const scenes = story.scenes.slice(0, 7);
 
-    // ريندر جميع المشاهد السبعة بالتوازي على أنوية المعالج
     const readyClips = await Promise.all(
       scenes.map((sc, idx) => renderOneScene(jobDir, sc, idx, scenes.length, story.topicTag, whooshPath, popPath))
     );
@@ -608,7 +583,7 @@ async function produceAndPublishOne(index) {
 async function main() {
   await fsp.mkdir(WORK_DIR, { recursive: true });
   console.log(`🚀 بدء إنتاج دفعة (${BATCH_COUNT} فيديو) وإرسالها إلى ${TARGET_PLATFORM_URL}`);
-  console.log(`🔑 المفاتيح المقروءة -> Gemini: ${GEMINI_KEYS.length} | Groq: ${GROQ_KEYS.length}`);
+  console.log(`🔑 مفاتيح Gemini المقروءة: ${GEMINI_KEYS.length}`);
   for (let i = 0; i < BATCH_COUNT; i++) {
     try {
       await produceAndPublishOne(i);
