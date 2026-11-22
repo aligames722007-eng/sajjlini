@@ -2,12 +2,12 @@ name: UniShorts 24/7 Cloud Factory
 
 on:
   schedule:
-    - cron: '0 * * * *' # يعمل تلقائياً بداية كل ساعة (24 مرة باليوم)
-  workflow_dispatch:    # يتيح لك تشغيله يدوياً بنقرة زر من موبايلك
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   produce-batch:
-    runs-on: ubuntu-latest # سيرفر مجاني 4 أنوية CPU + 16 GB RAM
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -25,13 +25,13 @@ jobs:
       - name: Install Node Dependencies
         run: npm install
 
-- name: Produce and Upload 45 Shorts to AWS
-   env:
-     TARGET_PLATFORM_URL: ${{ secrets.TARGET_PLATFORM_URL }}
-     TARGET_ADMIN_PASSWORD: ${{ secrets.TARGET_ADMIN_PASSWORD }}
-     GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
-     GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
-     ELEVENLABS_HUB_URL: ${{ secrets.ELEVENLABS_HUB_URL }}
-     ELEVENLABS_KEYS: ${{ secrets.ELEVENLABS_KEYS }}
-     BATCH_COUNT: '45'
-   run: npm start
+      - name: Produce and Upload 45 Shorts to AWS
+        env:
+          TARGET_PLATFORM_URL: ${{ secrets.TARGET_PLATFORM_URL }}
+          TARGET_ADMIN_PASSWORD: ${{ secrets.TARGET_ADMIN_PASSWORD }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          ELEVENLABS_HUB_URL: ${{ secrets.ELEVENLABS_HUB_URL }}
+          ELEVENLABS_KEYS: ${{ secrets.ELEVENLABS_KEYS }}
+          BATCH_COUNT: '45'
+        run: npm start
