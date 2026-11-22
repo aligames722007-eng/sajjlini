@@ -1,0 +1,36 @@
+name: UniShorts 24/7 Cloud Factory
+
+on:
+  schedule:
+    - cron: '0 * * * *' # يعمل تلقائياً بداية كل ساعة (24 مرة باليوم)
+  workflow_dispatch:    # يتيح لك تشغيله يدوياً بنقرة زر من موبايلك
+
+jobs:
+  produce-batch:
+    runs-on: ubuntu-latest # سيرفر مجاني 4 أنوية CPU + 16 GB RAM
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js & Python
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install FFmpeg, Arabic Fonts & Free Edge TTS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-core python3-pip
+          pip3 install edge-tts
+
+      - name: Install Node Dependencies
+        run: npm install
+
+      - name: Produce and Upload 45 Shorts to AWS
+        env:
+          TARGET_PLATFORM_URL: ${{ secrets.TARGET_PLATFORM_URL }}
+          TARGET_ADMIN_PASSWORD: ${{ secrets.TARGET_ADMIN_PASSWORD }}
+          GROQ_API_KEYS: ${{ secrets.GROQ_API_KEYS }}
+          ELEVENLABS_HUB_URL: ${{ secrets.ELEVENLABS_HUB_URL }}
+          ELEVENLABS_KEYS: ${{ secrets.ELEVENLABS_KEYS }}
+          BATCH_COUNT: '45'
+        run: npm start

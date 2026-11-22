@@ -1,0 +1,10 @@
+{
+  "name": "unishorts-cloud-worker",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node cloud-worker.js"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2"
+  }
+}
